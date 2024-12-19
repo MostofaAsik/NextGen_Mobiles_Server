@@ -36,6 +36,13 @@ async function run() {
         //server code will appear here
         const usersCollection = client.db('NextGen_Mobiles').collection('users')
 
+        //email based info
+        app.get('/users/:email', async (req, res) => {
+            const query = { email: req.params.email }
+            const user = await usersCollection.findOne(query)
+            res.send(user)
+        })
+
         //users post
         app.post('/users', async (req, res) => {
             const user = req.body
