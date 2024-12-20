@@ -137,6 +137,32 @@ async function run() {
             }
         });
 
+        //role update
+        app.patch('/update-user-role/:id', verifyJWT, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const { role } = req.body;
+
+            const allowedRoles = ['buyer', 'seller', 'admin'];
+            if (!allowedRoles.includes(role)) {
+                return res.status(400).send({ success: false, message: 'Invalid role specified' });
+            }
+
+            try {
+                const filter = { _id: new ObjectId(id) };
+                const updateDoc = { $set: { role } };
+                const result = await usersCollection.updateOne(filter, updateDoc);
+
+                if (result.modifiedCount > 0) {
+                    res.send({ success: true, message: 'User role updated successfully' });
+                } else {
+                    res.status(404).send({ success: false, message: 'User not found or role is the same' });
+                }
+            } catch (error) {
+                res.status(500).send({ success: false, message: 'Failed to update user role', error: error.message });
+            }
+        });
+
+
         //add-products
         app.post('/add-product', verifyJWT, verifySeller, async (req, res) => {
             const product = req.body
