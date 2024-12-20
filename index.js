@@ -170,7 +170,7 @@ async function run() {
             res.send(result)
         })
         //get user specific products
-        app.get('/user/products', verifyJWT, async (req, res) => {
+        app.get('/user/products', verifyJWT, verifySeller, async (req, res) => {
             const email = req.decoded.email;
             try {
                 const products = await productsCollection.find({ email }).toArray();
@@ -212,6 +212,69 @@ async function run() {
             res.send({ products, brands, categories, totalProduct })
 
         })
+
+
+        // Update a specific product by the seller
+        app.patch('/user/products/:id', verifyJWT, verifySeller, async (req, res) => {
+            const productId = req.params.id;
+            const email = req.decoded.email;
+            const updates = req.body;
+
+            try {
+
+                const product = await productsCollection.findOne({ _id: new ObjectId(productId), email });
+
+
+                if (!product) {
+                    return res.status(403).send({ error: true, message: 'Forbidden - Product not found or you are not the owner' });
+                }
+
+                const filter = { _id: new ObjectId(productId), email };
+                const updateDoc = { $set: updates };
+
+                const result = await productsCollection.updateOne(filter, updateDoc);
+
+                if (result.modifiedCount > 0) {
+                    res.send({ success: true, message: 'Product updated successfully' });
+                } else {
+                    res.status(404).send({ success: false, message: 'Product not found or no changes made' });
+                }
+            } catch (error) {
+                res.status(500).send({ success: false, message: 'Failed to update product', error: error.message });
+            }
+        });
+
+
+
+
+        // Delete seller-specific product
+        app.delete('/user/products/:id', verifyJWT, verifySeller, async (req, res) => {
+            const productId = req.params.id;
+            const email = req.decoded.email;
+
+            try {
+
+                const product = await productsCollection.findOne({ _id: new ObjectId(productId), email });
+
+
+                if (!product) {
+                    return res.status(403).send({ error: true, message: 'Forbidden - Product not found or you are not the owner' });
+                }
+
+
+                const result = await productsCollection.deleteOne({ _id: new ObjectId(productId) });
+
+
+                if (result.deletedCount === 1) {
+                    res.send({ success: true, message: 'Product deleted successfully' });
+                } else {
+                    res.status(404).send({ success: false, message: 'Product not found' });
+                }
+            } catch (error) {
+                res.status(500).send({ success: false, message: 'Failed to delete product', error: error.message });
+            }
+        });
+
 
         // Send a ping to confirm a successful connection
         await client.db("admin").command({ ping: 1 });
