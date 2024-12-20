@@ -3,7 +3,7 @@ const express = require('express')
 const cors = require('cors')
 const jwt = require('jsonwebtoken');
 require('dotenv').config()
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express()
 const port = process.env.PORT || 5000
 
@@ -123,7 +123,19 @@ async function run() {
         })
 
         // specific id user delete
-
+        app.delete('/users/:id', verifyJWT, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            try {
+                const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
+                if (result.deletedCount === 1) {
+                    res.send({ success: true, message: 'User successfully deleted' });
+                } else {
+                    res.status(404).send({ success: false, message: 'User not found' });
+                }
+            } catch (error) {
+                res.status(500).send({ success: false, message: 'Failed to delete user', error: error.message });
+            }
+        });
 
         //add-products
         app.post('/add-product', verifyJWT, verifySeller, async (req, res) => {
