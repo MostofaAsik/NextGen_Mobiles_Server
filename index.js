@@ -180,6 +180,34 @@ async function run() {
             }
         });
 
+        //add wishlist
+        //add wishlist
+        app.patch('/wishlist', verifyJWT, async (req, res) => {
+            const { userEmail, productId } = req.body;
+
+            try {
+                // Log the incoming data to check if everything is correct
+                console.log('Received userEmail:', userEmail);
+                console.log('Received productId:', productId);
+
+                // Check if productId is valid ObjectId
+
+
+                // Update wishlist
+                const result = await usersCollection.updateOne(
+                    { email: userEmail },
+                    {
+                        $addToSet: { wishList: new ObjectId(String(productId)) }
+                    }
+                );
+                res.send(result)
+
+            } catch (error) {
+                console.error('Error adding product to wishlist:', error);
+                res.status(500).send({ success: false, message: 'Failed to add to wishlist', error: error.message });
+            }
+        });
+
         //all products
         app.get('/all-products', async (req, res) => {
             const { title, sort, category, brand, page = 1, limit = 3 } = req.query
