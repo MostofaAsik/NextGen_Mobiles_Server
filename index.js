@@ -4,14 +4,17 @@ const cors = require('cors')
 const jwt = require('jsonwebtoken');
 require('dotenv').config()
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const { default: Stripe } = require('stripe');
 const app = express()
 const port = process.env.PORT || 5000
+
+
 
 //middleware
 
 app.use(express.json())
 app.use(cors())
-
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 
 
@@ -39,6 +42,7 @@ async function run() {
         //server code will appear here
         const usersCollection = client.db('NextGen_Mobiles').collection('users')
         const productsCollection = client.db('NextGen_Mobiles').collection('products')
+        const cartsCollection = client.db('NextGen_Mobiles').collection('carts')
 
 
 
@@ -49,7 +53,7 @@ async function run() {
                 return res.status(401).send({ error: true, message: 'Unauthorized Access - No Token Provided' });
             }
             const token = authorization.split(' ')[1]
-            console.log(token);
+
             jwt.verify(token, process.env.ACCESS_TOKEN, (err, decoded) => {
                 if (err) {
                     return res.status(401).send({ error: true, message: 'Unauthorized Access - Invalid Token' });
@@ -62,10 +66,10 @@ async function run() {
         const verifySeller = async (req, res, next) => {
             const email = req.decoded.email;
             const query = { email: email };
-            console.log(query)
+
             try {
                 const user = await usersCollection.findOne(query);
-                console.log(user)
+
                 if (user?.role !== 'seller') {
                     return res.status(403).send({ error: true, message: 'Forbidden - Not a Seller' });
                 }
@@ -180,18 +184,57 @@ async function run() {
             }
         });
 
-        //add wishlist
+        // API to get product details by ID
+        app.get('/product/:id', async (req, res) => {
+            const productId = req.params.id;
+
+            try {
+                // Check if ID is valid
+                if (!ObjectId.isValid(productId)) {
+                    return res.status(400).json({ success: false, message: 'Invalid Product ID' });
+                }
+
+                // Fetch product from the database
+                const product = await productsCollection.findOne({ _id: new ObjectId(productId) });
+
+                if (!product) {
+                    return res.status(404).json({ success: false, message: 'Product not found' });
+                }
+
+                res.json({ success: true, product });
+            } catch (error) {
+                console.error('Error fetching product details:', error);
+                res.status(500).json({ success: false, message: 'Internal Server Error' });
+            }
+        });
         //add wishlist
         app.patch('/wishlist', verifyJWT, async (req, res) => {
             const { userEmail, productId } = req.body;
 
             try {
-                // Log the incoming data to check if everything is correct
-                console.log('Received userEmail:', userEmail);
-                console.log('Received productId:', productId);
 
-                // Check if productId is valid ObjectId
+                app.get('/product/:id', async (req, res) => {
+                    const productId = req.params.id;
 
+                    try {
+
+                        if (!ObjectId.isValid(productId)) {
+                            return res.status(400).json({ success: false, message: 'Invalid Product ID' });
+                        }
+
+                        // Fetch product from the database
+                        const product = await productsCollection.findOne({ _id: new ObjectId(productId) });
+
+                        if (!product) {
+                            return res.status(404).json({ success: false, message: 'Product not found' });
+                        }
+
+                        res.json({ success: true, product });
+                    } catch (error) {
+                        console.error('Error fetching product details:', error);
+                        res.status(500).json({ success: false, message: 'Internal Server Error' });
+                    }
+                });
 
                 // Update wishlist
                 const result = await usersCollection.updateOne(
@@ -207,6 +250,258 @@ async function run() {
                 res.status(500).send({ success: false, message: 'Failed to add to wishlist', error: error.message });
             }
         });
+
+        //get wishlist
+        app.get('/wishlist/:userId', verifyJWT, async (req, res) => {
+            const userId = req.params.userId;
+            const decodedUserId = req.decoded.userId;
+
+            try {
+                const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
+
+                if (!user || !user.wishList || user.wishList.length === 0) {
+                    return res.status(404).send({ success: false, message: 'Wishlist is empty' });
+                }
+
+                const wishlistProductIds = user.wishList.map((id) => new ObjectId(id));
+
+                const products = await productsCollection
+                    .find({ _id: { $in: wishlistProductIds } })
+                    .toArray();
+
+                res.send(products);
+            } catch (error) {
+                res.status(500).send({ success: false, message: 'Failed to get wishlist', error: error.message });
+            }
+        });
+
+        //remove wishlist
+        app.delete('/wishlist/:userId/:productId', verifyJWT, async (req, res) => {
+            const userId = req.params.userId;
+            const productId = req.params.productId;
+            const decodedUserId = req.decoded.userId;
+
+            try {
+
+                const result = await usersCollection.updateOne(
+                    { _id: new ObjectId(userId) },
+                    { $pull: { wishList: new ObjectId(productId) } }
+                );
+
+                if (result.modifiedCount > 0) {
+                    res.send({ success: true, message: 'Product removed from wishlist' });
+                } else {
+                    res.send({ success: false, message: 'Product not found in wishlist' });
+                }
+            } catch (error) {
+                res.status(500).send({ error: true, message: 'Failed to remove product from wishlist' });
+            }
+        });
+
+
+
+
+
+
+
+
+
+
+
+
+
+        // Add product to cart and decrease stock in products collection
+        app.post('/add-to-cart', verifyJWT, async (req, res) => {
+            const { userEmail, productId, quantity } = req.body;
+
+            // Basic validation
+            if (!userEmail || !productId || !quantity) {
+                return res.status(400).send({ success: false, message: 'Please provide userEmail, productId, and quantity' });
+            }
+
+            try {
+                // Step 1: Check if the product exists
+                const product = await productsCollection.findOne({ _id: new ObjectId(productId) });
+
+                if (!product) {
+                    return res.status(404).send({ success: false, message: 'Product not found' });
+                }
+
+                const stock = Number(product.stock); // Convert stock to a number
+                if (isNaN(stock) || stock < quantity) {
+                    return res.status(400).send({
+                        success: false,
+                        message: 'Insufficient stock available for the requested product',
+                    });
+                }
+
+                // Step 2: Check if the cart already contains the product
+                const existingCart = await cartsCollection.findOne({ email: userEmail });
+
+                if (existingCart) {
+                    const existingProduct = existingCart.products.find(item => item.productId.toString() === productId);
+
+                    if (existingProduct) {
+                        // If the product is already in the cart, increase the quantity
+                        const newQuantity = existingProduct.quantity + quantity;
+
+                        await cartsCollection.updateOne(
+                            { email: userEmail, "products.productId": productId },
+                            { $set: { "products.$.quantity": newQuantity } }
+                        );
+                    } else {
+                        // If the product is not in the cart, add it
+                        await cartsCollection.updateOne(
+                            { email: userEmail },
+                            {
+                                $push: {
+                                    products: {
+                                        productId: new ObjectId(productId),
+                                        title: product.title,
+                                        price: product.price,
+                                        imageURL: product.imageURL,
+                                        stock: product.stock,
+                                        quantity: quantity,
+                                    },
+                                },
+                            }
+                        );
+                    }
+                } else {
+                    // If the cart doesn't exist, create a new cart and add the product
+                    const newCart = {
+                        email: userEmail,
+                        products: [
+                            {
+                                productId: new ObjectId(productId),
+                                title: product.title,
+                                price: product.price,
+                                imageURL: product.imageURL,
+                                stock: product.stock,
+                                quantity: quantity,
+                            },
+                        ],
+                    };
+                    await cartsCollection.insertOne(newCart);
+                }
+
+                // Step 3: Decrease the stock in the products collection
+                const newStock = stock - quantity;
+                await productsCollection.updateOne(
+                    { _id: new ObjectId(productId) },
+                    { $set: { stock: newStock } }
+                );
+
+                // Step 4: Return success response
+                res.send({
+                    success: true,
+                    message: 'Product added to cart and stock decreased',
+                });
+            } catch (error) {
+                console.error('Error adding product to cart:', error);
+                res.status(500).send({ success: false, message: 'Failed to add product to cart', error: error.message });
+            }
+        });
+
+
+
+        app.get('/cart/:userEmail', verifyJWT, async (req, res) => {
+            try {
+                const userEmail = req.params.userEmail;
+
+
+
+                const cart = await cartsCollection.findOne({ email: userEmail });
+
+
+                if (!cart) {
+                    return res.status(404).send({ success: false, message: 'Cart not found for this user.' });
+                }
+
+                res.status(200).send({ success: true, cart: cart.products });
+            } catch (error) {
+                console.error('Error fetching cart data:', error);
+                res.status(500).send({ success: false, message: 'Failed to fetch cart data.' });
+            }
+        });
+
+
+
+        app.get('/cart/:userEmail', verifyJWT, async (req, res) => {
+            try {
+                const userEmail = req.params.userEmail;
+
+
+                const cart = await cartsCollection.findOne({ email: userEmail });
+
+                if (!cart) {
+                    return res.status(404).send({ success: false, message: 'Cart not found for this user.' });
+                }
+
+
+                res.status(200).send({ success: true, cart: cart.products });
+            } catch (error) {
+                console.error('Error fetching cart data:', error);
+                res.status(500).send({ success: false, message: 'Failed to fetch cart data.' });
+            }
+        });
+
+
+
+
+
+        // Delete a specific product from the user's cart
+
+
+
+
+        app.delete('/cart/:userEmail/:productId', verifyJWT, async (req, res) => {
+            const userEmail = req.params.userEmail;
+            let productId;
+
+            try {
+                // Ensure productId is an ObjectId
+                productId = new ObjectId(req.params.productId);
+
+                // Fetch the user's cart
+                const cart = await cartsCollection.findOne({ email: userEmail });
+
+                if (!cart) {
+                    return res.status(404).send({ success: false, message: 'Cart not found for this user.' });
+                }
+
+                // Check if the product exists in the user's cart
+                const productIndex = cart.products.findIndex(product => product.productId.toString() === productId.toString());
+
+                if (productIndex === -1) {
+                    return res.status(404).send({ success: false, message: 'Product not found in cart.' });
+                }
+
+                // Remove the product from the cart
+                const updatedCart = await cartsCollection.updateOne(
+                    { email: userEmail },
+                    { $pull: { products: { productId } } }
+                );
+
+                if (updatedCart.modifiedCount > 0) {
+                    return res.send({ success: true, message: 'Product removed from cart successfully.' });
+                } else {
+                    return res.status(400).send({ success: false, message: 'Failed to remove product from cart.' });
+                }
+            } catch (error) {
+                console.error('Error removing product from cart:', error);
+                return res.status(500).send({ success: false, message: 'Failed to remove product from cart', error: error.message });
+            }
+        });
+
+
+
+
+
+
+
+
+
 
         //all products
         app.get('/all-products', async (req, res) => {
@@ -302,6 +597,33 @@ async function run() {
                 res.status(500).send({ success: false, message: 'Failed to delete product', error: error.message });
             }
         });
+
+
+
+
+        //payment implementation
+        app.post('/create-payment', async (req, res) => {
+            const { amount, currency } = req.body;
+
+            try {
+                const paymentIntent = await stripe.paymentIntents.create({
+                    amount,
+                    currency,
+                });
+
+                res.status(200).send({
+                    clientSecret: paymentIntent.client_secret,
+                });
+            } catch (error) {
+                console.error('Error creating payment intent:', error);
+                res.status(500).send({ error: error.message });
+            }
+        });
+
+
+
+
+
 
 
         // Send a ping to confirm a successful connection
