@@ -9,11 +9,18 @@ const app = express()
 const port = process.env.PORT || 5000
 
 
+const corsOptions = {
+    origin: [
+        'http://localhost:5173', "https://nextgen-mobiles.web.app"],
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    credentials: true,
+};
+
 
 //middleware
 
 app.use(express.json())
-app.use(cors())
+app.use(cors(corsOptions))
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 
@@ -37,7 +44,7 @@ const client = new MongoClient(uri, { serverApi: { version: ServerApiVersion.v1,
 async function run() {
     try {
 
-        await client.connect();
+        // await client.connect();
 
         //server code will appear here
         const usersCollection = client.db('NextGen_Mobiles').collection('users')
@@ -627,8 +634,8 @@ async function run() {
 
 
         // Send a ping to confirm a successful connection
-        await client.db("admin").command({ ping: 1 });
-        console.log("Pinged your deployment. You successfully connected to MongoDB!");
+        // await client.db("admin").command({ ping: 1 });
+        // console.log("Pinged your deployment. You successfully connected to MongoDB!");
     } finally {
         // Ensures that the client will close when you finish/error
         // await client.close();
